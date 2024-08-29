@@ -14,20 +14,127 @@
   <meta property="og:image" content="">
   <meta property="og:image:alt" content="">
 
-  <link rel="icon" href="/favicon.ico" sizes="any">
-  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/img/icon.svg" sizes="any">
   <link rel="apple-touch-icon" href="icon.png">
-
-  <link rel="manifest" href="site.webmanifest">
   <meta name="theme-color" content="#fafafa">
+
+  <script>
+    async function genImageSCAD(cvs) {
+      const imgData = cvs.getContext('2d').getImageData(0, 0, cvs.width, cvs.height)
+      const rgba = imgData.data;
+
+      const matrix = [];
+      for (let y = 0; y < cvs.height; y++) {
+        matrix[y] = [];
+        for (let x = 0; x < cvs.width; x++) {
+          let offset = ((y * cvs.width) + x) * 4;
+          let intensity = (rgba[offset] + rgba[offset + 1] + rgba[offset + 2]) * (rgba[offset + 3] / 255)
+          matrix[y][x] = intensity / (255 * 3)
+        }
+      }
+
+      let imageSCAD = `$input = ${JSON.stringify(matrix)};`
+      return fetch("/scad/gen.scad").then(async result => {
+        if (result.ok) {
+          let code = await result.text();
+          return `${code}\n${imageSCAD}`
+        } else {
+          return "base code fetch failed"
+        }
+      }).catch(err => err.text)
+    }
+
+    let copyAck = null
+
+    function copyOut() {
+      const copyBtn = document.getElementById("copy")
+      const output = document.getElementById("output")
+
+      if (copyAck) {
+        clearTimeout(copyAck)
+      }
+      window.navigator.clipboard.writeText(output.value).then(() => {
+          copyBtn.innerText = "Copied ✅"
+          copyAck = setTimeout(() => copyBtn.innerText = "Copy 📋", 2500)
+        }
+      ).catch(() => {
+        copyBtn.innerText = "Copy Failed ❌"
+        copyAck = setTimeout(() => copyBtn.innerText = "Copy 📋", 2500)
+      })
+    }
+
+    function initStl() {
+      const output = document.getElementById("output");
+      genSTL(output.value)
+    }
+  </script>
+
+  <script type="module">
+    import OpenSCAD from "./openscad/openscad.js";
+    async function genSTL(scad) {
+      // import { addMCAD } from "./openscad/openscad.mcad.js";
+
+      const filename = "rollers.stl";
+      const instance = await OpenSCAD({noInitialRun: true});
+      instance.FS.writeFile("/input.scad", scad);
+      instance.callMain(["/input.scad", "--enable=manifold", "-o", filename]);
+      const output = instance.FS.readFile("/"+filename);
+
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([output], { type: "application/octet-stream" }), null);
+      link.download = filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }
+
+    window.genSTL = genSTL
+  </script>
 </head>
 
-<body>
+<body style="display: flex; flex-direction: column; justify-content: center; align-items: flex-start">
+<div id="in" style="display: flex; flex-direction: column; justify-content: center; width: 80vw; min-width: 0; align-items: flex-start">
+  <canvas id="cvs" width="1" height="1" style="min-width: 0;  margin: 0 40vw 15px 40vw"></canvas>
+  <input id="upload" type='file' accept='image/*' style="min-width: 0">
+</div>
 
-  <!-- Add your site or application content here -->
-  <p>Hello world! This is HTML5 Boilerplate.</p>
-  <script src="js/app.js"></script>
-
+<div>
+  <div id="out-header">
+    <label for="output">OpenSCAD:</label>
+    <button id="copy" disabled="disabled" onclick="copyOut()">Copy 📋</button>
+    <button id="stl" disabled="disabled" onclick="initStl()">Create STL</button>
+  </div>
+  <textarea id="output" name="output" cols="100" rows="20" style="max-width: 80vw; white-space: pre-wrap;" contenteditable="false"></textarea>
+</div>
 </body>
 
+<script>
+  document.getElementById('upload').addEventListener('change', function (e) {
+    if (e.target.files[0]) {
+      const cvs = document.getElementById("cvs");
+      const output = document.getElementById("output");
+      const copyBtn = document.getElementById("copy")
+      const stlBtn = document.getElementById("stl")
+
+      const ctx = cvs.getContext('2d')
+      const reader = new FileReader();
+      reader.onload = function () {
+        console.log("reader loaded")
+        let img = document.createElement("img")
+        img.src = reader.result;
+        setTimeout(() => {
+          cvs.width = img.width;
+          cvs.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          genImageSCAD(cvs).then(code => {
+            output.value = code
+            copyBtn.disabled = false
+            stlBtn.disabled = false
+          })
+        }, 500)
+      };
+      reader.readAsDataURL(e.target.files[0]);
+    }
+  });
+</script>
 </html>
